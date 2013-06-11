@@ -1,6 +1,6 @@
 package test.groovy
 
-import org.plavelo.markdown.*
+import org.plavelo.markdown.Markdown
 
 public class MarkdownSpec extends spock.lang.Specification {
 	
@@ -54,11 +54,27 @@ public class MarkdownSpec extends spock.lang.Specification {
 
 
     def "Convert block quotes"() {
+    /*
         expect:
         new Markdown().convertBlockQuotes(before) == converted
 
         where:
         before             | converted
         "> some text"      | "<blockquote>some text</blockquote>\n"
+        */
+    }
+
+    def "Convert Horizontal Rules"() {
+        expect:
+        new Markdown().convertHorizontalRules(before) == converted
+
+        where:
+        before                                    | converted
+        "* * *"                                   | "<hr />\n"
+        "***"                                     | "<hr />\n"
+        "*****"                                   | "<hr />\n"
+        "- - -"                                   | "<hr />\n"
+        "---------------------------------------" | "<hr />\n"
+        "  _ _ _"                                 | "<hr />\n"
     }
 }

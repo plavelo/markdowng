@@ -118,8 +118,8 @@ public class Markdown {
 
     public String runBlockGamut(String text) {
         text = convertHeaders(text);
-        text = doHorizontalRules(text);
-        text = doLists(text);
+        text = convertHorizontalRules(text);
+        text = convertLists(text);
         text = doCodeBlocks(text);
         text = convertBlockQuotes(text);
 
@@ -129,12 +129,11 @@ public class Markdown {
         return text
     }
 
-    private String doHorizontalRules(String text) {
-        String[] hrDelimiters = ["\\*", "-", "_"];
-        for (String hrDelimiter : hrDelimiters) {
-            text = text.replaceAll(/^[ ]{0,2}([ ]?${hrDelimiter}[ ]?){3,}[ ]*$/, "<hr />");
+    def convertHorizontalRules(text) {
+        for (String hrDelimiter : [/\*/, /-/, /_/]) {
+            text = text.replaceAll(/^[ ]{0,2}([ ]?$hrDelimiter[ ]?){3,}[ ]*$/, "<hr />\n");
         }
-        return text
+        text
     }
 
     public String hashHTMLBlocks(String text) {
@@ -366,28 +365,93 @@ public class Markdown {
         return ed
     }
 
-    private String doLists(String text) {
+    private String processListItems(String list) {
+        // The listLevel variable keeps track of when we're inside a list.
+        // Each time we enter a list, we increment it; when we leave a list,
+        // we decrement. If it's zero, we're not in a list anymore.
+        //
+        // We do this because when we're not inside a list, we want to treat
+        // something like this:
+        //
+        //       I recommend upgrading to version
+        //       8. Oops, now this line is treated
+        //       as a sub-list.
+        //
+        // As a single paragraph, despite the fact that the second line starts
+        // with a digit-period-space sequence.
+        //
+        // Whereas when we're inside a list (or sub-list), that line will be
+        // treated as the start of a sub-list. What a kludge, huh? This is
+        // an aspect of Markdown's syntax that's hard to parse perfectly
+        // without resorting to mind-reading. Perhaps the solution is to
+        // change the syntax rules such that sub-lists must start with a
+        // starting cardinal number; e.g. "1." or "a.".
+        listLevel++;
+
+        // Trim trailing blank lines:
+        list = list.replaceAll("\\n{2,}\\z", "\n");
+
+        String p = "(\\n)?" +
+                "^([ \\t]*)([-+*]|\\d+[.])[ ]+" +
+                "((?s:.+?)(\\n{1,2}))" +
+                "(?=\\n*(\\z|\\2([-+\\*]|\\d+[.])[ \\t]+))";
+        list = list.replaceAll(p) {
+            String leadingLine = it[1]
+            String item = it[4]
+            if (!isEmptyString(leadingLine) || hasParagraphBreak(item)) {
+                item = runBlockGamut(outdent(item));
+            } else {
+                // Recurse sub-lists
+                item = convertLists(outdent(item));
+                item = runSpanGamut(item);
+            }
+            return "<li>" + item.trim() + "</li>\n";
+        }
+        listLevel--;
+        return list;
+    }
+
+    private boolean hasParagraphBreak(String item) {
+        return item.contains("\n\n")
+    }
+
+    private boolean isEmptyString(String leadingLine) {
+        return leadingLine == null || leadingLine.equals("");
+    }
+
+    def convertHeaders(markup) {
+        // setext-style headers
+        markup = markup.replaceAll(/(?m)^(.*)\n====+$/, '<h1>$1</h1>\n');
+        markup = markup.replaceAll(/(?m)^(.*)\n----+$/, '<h2>$1</h2>\n');
+
+        // atx-style headers
+        markup = markup.replaceAll(/(?m)^(#{1,6})\s*(.*?)\s*#*$/) {
+            def marker = it[1]
+            def heading = it[2]
+            def tag = "h${marker.length()}"
+            "<${tag}>${heading}</${tag}>\n"
+        }
+    }
+
+    def convertBlockQuotes(markup) {
+        markup = markup.replaceAll(/((^[ \t]*>[ \t]?.+(\n.+)*\n*)+)/) {
+            def blockQuote = it[1]
+            blockQuote = blockQuote.replaceAll(/^[ \t]*>[ \t]?/, '')
+            blockQuote = blockQuote.replaceAll(/^[ \t]+$/, '');
+            blockQuote = runBlockGamut(blockQuote);
+            blockQuote = blockQuote.replaceAll("^", "  ");
+
+            blockQuote = blockQuote.replaceAll(/(?s)(\s*<pre>.*?<\/pre>)/) { w, pre ->
+                return pre.replaceAll(/^  /, '');
+            }
+            return "<blockquote>\n${blockQuote}\n</blockquote>\n\n";
+        }
+    }
+
+    def convertLists(markup) {
         int lessThanTab = tabWidth - 1;
 
-        String wholeList =
-            "(" +
-                    "(" +
-                    "[ ]{0," + lessThanTab + "}" +
-                    "((?:[-+*]|\\d+[.]))" + // $3 is first list item marker
-                    "[ ]+" +
-                    ")" +
-                    "(?s:.+?)" +
-                    "(" +
-                    "\\z" + // End of input is OK
-                    "|" +
-                    "\\n{2,}" +
-                    "(?=\\S)" + // If not end of input, then a new para
-                    "(?![ ]*" +
-                    "(?:[-+*]|\\d+[.])" +
-                    "[ ]+" +
-                    ")" + // negative lookahead for another list marker
-                    ")" +
-                    ")";
+        String wholeList = /(([ ]{0,$lessThanTab}((?:[-+*]|\d+[.]))[ ]+)(?s:.+?)(\z|\n{2,}(?=\S)(?![ ]*(?:[-+*]|\d+[.])[ ]+)))/;
 
         if (listLevel > 0) {
             String matchStartOfLine = "^" + wholeList;
@@ -402,7 +466,7 @@ public class Markdown {
 
                 // Turn double returns into triple returns, so that we can make a
                 // paragraph for the last item in a list, if necessary:
-                list = list.replaceAll( "\\n{2,}", "\n\n\n");
+                list = list.replaceAll(/\n{2,}/, /\n\n\n/);
 
                 String result = processListItems(list);
 
@@ -442,87 +506,6 @@ public class Markdown {
         }
 
         return text;
-    }
-
-    private String processListItems(String list) {
-        // The listLevel variable keeps track of when we're inside a list.
-        // Each time we enter a list, we increment it; when we leave a list,
-        // we decrement. If it's zero, we're not in a list anymore.
-        //
-        // We do this because when we're not inside a list, we want to treat
-        // something like this:
-        //
-        //       I recommend upgrading to version
-        //       8. Oops, now this line is treated
-        //       as a sub-list.
-        //
-        // As a single paragraph, despite the fact that the second line starts
-        // with a digit-period-space sequence.
-        //
-        // Whereas when we're inside a list (or sub-list), that line will be
-        // treated as the start of a sub-list. What a kludge, huh? This is
-        // an aspect of Markdown's syntax that's hard to parse perfectly
-        // without resorting to mind-reading. Perhaps the solution is to
-        // change the syntax rules such that sub-lists must start with a
-        // starting cardinal number; e.g. "1." or "a.".
-        listLevel++;
-
-        // Trim trailing blank lines:
-        list = list.replaceAll("\\n{2,}\\z", "\n");
-
-        String p = "(\\n)?" +
-                "^([ \\t]*)([-+*]|\\d+[.])[ ]+" +
-                "((?s:.+?)(\\n{1,2}))" +
-                "(?=\\n*(\\z|\\2([-+\\*]|\\d+[.])[ \\t]+))";
-        list = list.replaceAll(p) {
-            String leadingLine = it[1]
-            String item = it[4]
-            if (!isEmptyString(leadingLine) || hasParagraphBreak(item)) {
-                item = runBlockGamut(outdent(item));
-            } else {
-                // Recurse sub-lists
-                item = doLists(outdent(item));
-                item = runSpanGamut(item);
-            }
-            return "<li>" + item.trim() + "</li>\n";
-        }
-        listLevel--;
-        return list;
-    }
-
-    private boolean hasParagraphBreak(String item) {
-        return item.contains("\n\n")
-    }
-
-    private boolean isEmptyString(String leadingLine) {
-        return leadingLine == null || leadingLine.equals("");
-    }
-
-    def convertHeaders(markup) {
-        // setext-style headers
-        markup = markup.replaceAll(/(?m)^(.*)\n====+$/, '<h1>$1</h1>\n');
-        markup = markup.replaceAll(/(?m)^(.*)\n----+$/, '<h2>$1</h2>\n');
-
-        // atx-style headers
-        markup = markup.replaceAll(/(?m)^(#{1,6})\s*(.*?)\s*#*$/) {
-            def heading = it[2]
-            def tag = "h${it[1].length()}"
-            "<${tag}>${heading}</${tag}>\n"
-        }
-    }
-
-    def convertBlockQuotes(markup) {
-        markup = markup.replaceAll(/((^[ \t]*>[ \t]?.+\n?(.+\n)*\n*)+)/) { whole, blockQuote ->
-            blockQuote = blockQuote.replaceAll(/^[ \t]*>[ \t]?/, '')
-            blockQuote = blockQuote.replaceAll(/^[ \t]+$/, '');
-            blockQuote = runBlockGamut(blockQuote);
-            blockQuote = blockQuote.replaceAll("^", "  ");
-
-            blockQuote = blockQuote.replaceAll(/(?s)(\s*<pre>.*?<\/pre>)/) { w, pre ->
-                return pre.replaceAll(/^  /, '');
-            }
-            return "<blockquote>\n${blockQuote}\n</blockquote>\n\n";
-        }
     }
 
 
