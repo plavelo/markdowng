@@ -1,14 +1,22 @@
-apply plugin: "eclipse"
 apply plugin: "groovy"
 
 repositories {
-	mavenCentral()
-	mavenLocal()
+    mavenCentral()
+    mavenLocal()
 }
 
 dependencies {
-	groovy      "org.codehaus.groovy:groovy-all:2.0.6"
-	testCompile "org.spockframework:spock-core:0.7-groovy-2.0"
+    groovy      "org.codehaus.groovy:groovy-all:2.0.7"
+    testCompile "org.spockframework:spock-core:0.7-groovy-2.0", fileTree(dir: './lib',  includes: ['*.jar'])
+}
+
+test {
+    afterTest { desc, result -> 
+        println "Executing ${desc.name} [${desc.className}] with result: ${result.resultType}"
+        for ( e in result.exceptions) {
+            println e
+        }
+    }
 }
 
 task wrapper(type: Wrapper) { gradleVersion = '1.4' }
